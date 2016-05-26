@@ -3,7 +3,7 @@
  * Modified by Prajwal Bhattaram - 26/05/2016
  *
  * This file is part of the Arduino RFA1 Library. This library is for
- * Winbond NOR flash memory modules. In its current form it enables basic
+ * the ATMega128RFA1 microcontroller. In its current form it enables basic
  * Tx/Rx functions of the low-power 2.4 GHz transciever built into the
  * ATMega128RFA1.
  *
@@ -23,9 +23,12 @@
  */
  
 #include "RFA1.h"
+#include <stdbool.h>
+ #include <stdint.h>
 #include <avr/io.h>
 #include <util/delay.h>
 #include "RFA1.h"
+#include "radioDefines.h"
 
 uint8_t rawRSSI
 const int RF_BUFFER_SIZE = 127
@@ -36,41 +39,84 @@ struct ringBuffer {
 	volatile uint16_t tail;
 } RFRXBuffer;
 
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Private Functions ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
+//Checks to see if TRX is busy
+bool _trxBusy() {
+	if (TRX_STATUS & 0x1F)
+		return true;
+	else
+		return false;
+}
+
+//Resets TRX
+void _trxReset() {
+	TRXPR |= TRX_RESET;
+}
+
+//Wakes TRX (sets mode to TRX_OFF)
+bool _trxWake() {
+	TRX_STATE &= CMD_TRX_CLEAR;
+	TRX_STATE |= CMD_TRX_OFF; //Wakes the transciever (i.e. in mode TRX_OFF)
+	_delay_ms(1);
+	
+	if (TRX_STATUS & STAT_TRX_OFF) //Checks to see that the transciever is awake
+		return true
+	else
+		return false
+}
+
+//Clears ring buffer by writing all variables to 0
+void _clearRingBuffer() {
+	for (int i=0; i<128; i++)
+	{
+		radioRXBuffer.buffer[i] = 0;
+	}
+	radioRXBuffer.tail = 0;
+	radioRXBuffer.head = 0;
+}
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Public Functions ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
+
 // Initialize the RFA1's low-power 2.4GHz transciever.
 // Sets up the state machine, and gets the radio into
 // the RX_ON state. Interrupts are enabled for RX
 // begin and end, as well as TX end.
 uint8_t begin(uint8_t channel) {
-	for (int i=0; i<128; i++)
-	{
-		RFRXBuffer.buffer[i] = 0;
+
+	//If the transciever is currently in STATE_TRANSITION_IN_PROGRESS do nothing
+	if (_trxBusy()) {
+		return false;
 	}
-	RFRXBuffer.tail = 0;
-	RFRXBuffer.head = 0;
 
-	TRXPR |= (1<<TRXRST);
-	IRQ_MASK = 0;
-	TRX_STATE = (TRX_STATE & 0xE0) | TRX_OFF;
-	_delay_ms(1);
+	_clearRingBuffer();//Clear the ringBuffer
 
-	if ((TRX_STATUS & 0x1F) != TRX_OFF)
-	return 0;
+	_trxReset();							//Causes the transciever to reset
+	INT_TRX_DISABLE;						//Disable all TRX interrupts by setting IRQ_MASK to 0x00
 
-	TRX_CTRL_1 |= (1<<TX_AUTO_CRC_ON);
+	if (!_trxWake())
+		return false;						//Check to se if the current TRX state is TRX_OFF. If not, return false
 
-	IRQ_MASK = (1<<RX_START_EN) | (1<<RX_END_EN) | (1<<TX_END_EN);
+	TRX_CTRL_1 |= CTRL_TX_AUTO_CRC_ON;
 
-	if ((channel < 11) || (channel > 26))
-	chenel = 11;
+	//Enables the RX_START, RX_END and TX_END interrupts
+	INT_RX_START_ENABLE;
+	INT_RX_END_ENABLE;
+	INT_TX_END_ENABLE;
 
-	PHY_CC_CCA = (PHY_CC_CCA & 0xE0) | 11;
+	if ((channel < 11) || (channel > 26)){
+		channel = DEFAULT_CHANNEL;
+	}										//If the channel declared is out of bounds, sets the channel to default - 11 (0x0B)
 
-	TRX_STATE = (TRX_STATE & 0xE0) | RX_ON;
+	PHY_CC_CCA &= PHY_RESET_CHANNELS;
+	PHY_CC_CCA |= channel;
 
-	return 1;
+	TRX_STATE &= CMD_TRX_CLEAR;
+	TRX_STATE|=CMD_RX_ON;					//Set the TRX state to Receiving (RX_ON)
+
+	return true;
 }
 
-template <class T> bool Radio::transmit(const T& value) {
+template <class T> bool tx(const T& value) {
 	const byte* p = (const byte*)(const void*)&value;
 	int len = sizeof(value);
 
@@ -82,26 +128,31 @@ template <class T> bool Radio::transmit(const T& value) {
 		}
 		 //The Transceiver State Control Register -- TRX_STATE controls the states of the radio.
 		 //Setting the PLL state to PLL_ON begins the TX.
-		 TRX_STATE = (TRX_STATE & 0xE0) | PLL_ON;
-		 // Wait for PLL to lock
-		 while(!(TRX_STATUS & PLL_ON));
+		 TRX_STATE &= CMD_TRX_CLEAR;
+		 TRX_STATE |= CMD_PLL_ON;  // Set to TX start state
+
+		 while(!(TRX_STATUS & STAT_PLL_ON)) {
+		 	// Wait for PLL to lock
+		 }
 
 		 //digitalWrite(TX_LED, HIGH);
 
 		 // The start of frame buffer - TRXFBST is the first byte of the 128 byte frame. It should contain the length of the transmission.
 		 TRXFBST = length + 2;
-		 memcpy((void *)(&TRXFBST+1), frame, len);
-		 //Setting SLPTR high will initiate the TX.
-		 TRXPR |= (1<<SLPTR);
+		 memcpy((void *)(&TRXFBST+1), frame, len); //If this doesn't work change frame to &frame
+		 
+		 TRX_STATE |= CMD_TX_START;
 		 //Setting SLPTR low will end the TX.
 		 TRXPR &= ~(1<<SLPTR);
 
 		 // After the byte is sent the radio is set back into the RX waiting state.
-		 TRX_STATE = (TRX_STATE & 0xE0) | RX_ON;
+		 TRX_STATE &= CMD_TRX_CLEAR;
+		 TRX_STATE |= CMD_RX_ON;
 		}
-	else {
-		throwError();
-	}
+
+		else {
+			throwError();
+		}
 }
 
 // Returns how many unread bytes remain in the radio RX buffer.

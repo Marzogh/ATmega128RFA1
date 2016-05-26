@@ -1,12 +1,11 @@
-/* Arduino SPIFlash Library v.2.2.0
+/* Arduino RFA1 Library v.2.2.0
  * Copyright (C) 2015 by Prajwal Bhattaram
  * Modified by Prajwal Bhattaram - 24/11/2015
  *
- * This file is part of the Arduino SPIFlash Library. This library is for
- * Winbond NOR flash memory modules. In its current form it enables reading 
- * and writing individual data variables, structs and arrays from and to various locations;
- * reading and writing pages; continuous read functions; sector, block and chip erase;
- * suspending and resuming programming/erase and powering down for low power operation.
+ * This file is part of the Arduino RFA1 Library. This library is for
+ * the ATMega128RFA1 microcontroller. In its current form it enables basic
+ * Tx/Rx functions of the low-power 2.4 GHz transciever built into the
+ * ATMega128RFA1.
  *
  * This Library is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,14 +18,14 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License v3.0
- * along with the Arduino SPIFlash Library.  If not, see
+ * along with the Arduino RFA1 Library.  If not, see
  * <http://www.gnu.org/licenses/>.
  */
  
 #ifndef RFA1_H
 #define RFA1_H
 
-#include <Arduino.h>
+//#include <Arduino.h> //perhaps not needed?
 
 class RFA1 {
 public:
